@@ -40,3 +40,9 @@ logs/
 dbt_packages/
 transform/target/
 transform/dbt_packages/
+
+# Tested files
+test.py
+inspect_t2c_gtfs.py
+inspect_df.ipynb
+ingest_t2c_to_gcs.py
