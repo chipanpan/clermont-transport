@@ -1,0 +1,42 @@
+# Local application secrets and environment configuration
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+**/secrets.toml
+**/*secret*
+**/*secrets*
+
+# Cloud and API credentials
+*credentials*.json
+*service-account*.json
+*service_account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+credentials/
+**/credentials/
+
+# Local environments and machine-specific files
+venv/
+.venv/
+env/
+.python-version
+.DS_Store
+.idea/
+.vscode/
+
+# Generated data, caches, logs, and build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.log
+logs/
+dbt_packages/
+transform/target/
+transform/dbt_packages/

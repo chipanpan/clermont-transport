@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: t2c_static
+    database: clermont-transport
+    schema: t2c
+    tables:
+      - name: stops
+        identifier: ref_stops
+        description: "Static GTFS stop name reference"
+      - name: routes
+        identifier: ref_routes
+        description: "Static GTFS route name reference"
+      - name: trips
+        identifier: ref_trips
+        description: "Static GTFS trip details"
+  
+  - name: t2c_rt
+    database: clermont-transport
+    schema: t2c
+    tables:
+      - name: stop_updates
+        identifier: trips
+        description: "Real-time 5 minute snapshot updates"
