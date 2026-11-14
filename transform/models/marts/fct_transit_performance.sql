@@ -1,7 +1,5 @@
 {{ config(
-    materialized='incremental',
-    unique_key=['trip_id', 'stop_id', 'fetched_at'],
-    on_schema_change='append_new_columns'
+    materialized='table'
 ) }}
 
 WITH latest_updates AS (
@@ -12,18 +10,16 @@ WITH latest_updates AS (
         stop_sequence,
         delay_seconds,
         arrival_time AS actual_arrival_time,
-        departure_time AS actual_departure_time,
         fetched_at
     FROM {{ ref('stg_stop_updates') }}
+    WHERE arrival_time IS NOT NULL
     
-    {% if is_incremental() %}
-    WHERE fetched_at > (SELECT MAX(fetched_at) FROM {{ this }})
-    {% endif %}
+    -- Incremental block removed for this test
 
     QUALIFY ROW_NUMBER() OVER(
-        PARTITION BY trip_id, stop_id 
+        PARTITION BY DATE(DATETIME(arrival_time, 'Europe/Paris')), trip_id, stop_id 
         ORDER BY fetched_at DESC
-    ) = 1
+    ) = 1   
 )
 
 SELECT
@@ -48,13 +44,15 @@ SELECT
         ELSE 'Severe Delay'
     END AS punctuality_status,
 
-    u.fetched_at,
-    DATE(u.fetched_at) AS service_date,
-    EXTRACT(HOUR FROM u.fetched_at) AS hour_of_day,
-    FORMAT_TIMESTAMP('%A', u.fetched_at) AS day_of_week,
+    DATETIME(u.fetched_at, 'Europe/Paris') AS fetched_at,
     
-    u.actual_arrival_time,
-    u.actual_departure_time
+    -- Convert actual arrival time to French local time (Europe/Paris) with automatic DST handling
+    DATETIME(u.actual_arrival_time, 'Europe/Paris') AS actual_arrival_time,
+    
+    -- Derive service date, hour of day, and day of week from local French time
+    DATE(DATETIME(u.actual_arrival_time, 'Europe/Paris')) AS service_date,
+    EXTRACT(HOUR FROM DATETIME(u.actual_arrival_time, 'Europe/Paris')) AS hour_of_day,
+    FORMAT_DATETIME('%A', DATETIME(u.actual_arrival_time, 'Europe/Paris')) AS day_of_week
 
 FROM latest_updates u
 LEFT JOIN {{ source('t2c_static', 'routes') }} r 
