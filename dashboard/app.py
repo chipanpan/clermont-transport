@@ -43,14 +43,24 @@ PERIODS = {"7 jours": 7, "14 jours": 14, "30 jours": 30}
 ALL_STOPS = "Toute la ligne"
 MIN_CELL = 5  # minimum records for a heatmap cell to be shown
 LABEL_ALL_MAX = 10  # lines with more stops only name their key stops in the overview
-LABEL_TOP_N = 4     # number of most-delayed stops named in the overview
+LABEL_TOP_N = 3     # number of most-delayed stops named in the overview
 
 STATUS_ORDER = ["Early", "On Time", "Slight Delay", "Severe Delay"]
 STATUS_LABELS = {
     "Early": "En avance",
     "On Time": "À l’heure",
-    "Slight Delay": "Léger retard",
+    "Slight Delay": "Retard",
     "Severe Delay": "Retard important",
+}
+# Display-only: these MUST mirror the CASE expression in the dbt model fct_transit_performance (seconds).
+EARLY_MAX_S = 60     # earlier than -1 min   -> Early
+ON_TIME_MAX_S = 300  # up to +5 min          -> On Time
+SLIGHT_MAX_S = 600   # up to +10 min         -> Slight Delay, beyond -> Severe Delay
+STATUS_RANGES = {
+    "Early": f"plus de {EARLY_MAX_S // 60} min d’avance",
+    "On Time": f"de −{EARLY_MAX_S // 60} à +{ON_TIME_MAX_S // 60} min",
+    "Slight Delay": f"{ON_TIME_MAX_S // 60} à {SLIGHT_MAX_S // 60} min de retard",
+    "Severe Delay": f"plus de {SLIGHT_MAX_S // 60} min de retard",
 }
 STATUS_COLORS = {
     "Early": "#1f5fa8",
@@ -58,7 +68,7 @@ STATUS_COLORS = {
     "Slight Delay": "#e3a53a",
     "Severe Delay": "#7d1014",
 }
-DAYS_SHORT = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+DAYS_SHORT = ["lun", "mar", "mer", "jeu", "ven", "sam", "dim"]
 DAYS_LONG = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 CSS = """
@@ -99,8 +109,16 @@ html, body, .stApp, .stApp button, .stApp input, .stApp label, .stApp p, .stApp 
   border:2px solid #fff;box-sizing:border-box;}
 
 .kpi{background:#fff;border:1px solid var(--line);border-radius:20px;padding:20px;
-  min-height:164px;margin-bottom:1rem;box-sizing:border-box;}
+  min-height:164px;margin-bottom:1rem;box-sizing:border-box;position:relative;}
 .kpi .label{font-size:.82rem;font-weight:600;color:var(--muted);}
+.info{position:static;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;
+  margin-left:8px;border-radius:50%;border:1.5px solid var(--muted);color:var(--muted);font-size:.7rem;
+  font-weight:700;cursor:help;vertical-align:middle;outline:none;}
+.info:hover,.info:focus{border-color:var(--accent);color:var(--accent);}
+.info .tip{visibility:hidden;opacity:0;position:absolute;top:62px;left:12px;right:12px;
+  background:var(--ink);color:#fff;font-size:.82rem;font-weight:400;line-height:1.45;padding:10px 12px;
+  border-radius:10px;z-index:20;transition:opacity .15s;box-shadow:0 6px 20px rgba(0,0,0,.18);text-align:left;}
+.info:hover .tip,.info:focus .tip{visibility:visible;opacity:1;}
 .kpi .value{font-size:2.4rem;font-weight:700;letter-spacing:-.03em;margin:6px 0;}
 .kpi .foot{font-size:.82rem;color:var(--muted);}
 .kpi .foot.good{color:#1f5a3f;font-weight:600;}
@@ -115,6 +133,7 @@ html, body, .stApp, .stApp button, .stApp input, .stApp label, .stApp p, .stApp 
 
 .dist-bar{display:flex;height:40px;border-radius:12px;overflow:hidden;margin:12px 0 16px;}
 .dist-row{display:flex;justify-content:space-between;font-size:.95rem;padding:5px 0;}
+.range{color:var(--muted);font-size:.8rem;margin-left:8px;}
 .swatch{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;}
 </style>
 """
@@ -150,7 +169,7 @@ def load_data() -> pd.DataFrame:
         SELECT
             trip_id, stop_sequence, trip_headsign, route_short_name, stop_name,
             delay_seconds, delay_minutes, punctuality_status, service_date,
-            hour_of_day, day_of_week, actual_arrival_time
+            hour_of_day, actual_arrival_time
         FROM `clermont-transport.t2c_dbt.fct_transit_performance`
         WHERE route_short_name IN ('A', 'B', 'C', 'E1', 'E2')
         AND service_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
@@ -158,7 +177,7 @@ def load_data() -> pd.DataFrame:
     df = get_bq_client().query(query).to_dataframe()
     dates = pd.to_datetime(df["service_date"])
     df["service_date"] = dates.dt.date
-    df["weekday"] = dates.dt.dayofweek  # 0 = Monday; derived so we don't depend on day_of_week's format
+    df["weekday"] = dates.dt.dayofweek  # 0 = Monday, derived from service_date
     df["hour_of_day"] = pd.to_numeric(df["hour_of_day"], errors="coerce")
 
     df["trip_headsign"] = df["trip_headsign"].fillna("").astype(str)
@@ -199,7 +218,7 @@ def compute_kpis(d: pd.DataFrame):
     if d.empty:
         return None
     delay = d["delay_minutes"]
-    late = delay[delay > 0]
+    late = delay[d["punctuality_status"].isin(["Slight Delay", "Severe Delay"])]  # beyond the on-time window
     early = delay[d["punctuality_status"] == "Early"]
     return {
         "n": len(d),
@@ -238,8 +257,8 @@ def render_header(last_date):
         <div class="topbar">
           {logo_html}
           <div class="grow">
-            <div class="eyebrow">Observatoire du réseau</div>
-            <div class="tagline">Clermont Auvergne · La ponctualité des lignes, en clair</div>
+            <div class="eyebrow">Observatoire du réseau T2C</div>
+            <div class="tagline">La ponctualité des lignes fortes et essentielles</div>
           </div>
           <div class="pill-note">Données jusqu’au {last_date.strftime('%d/%m/%Y')}</div>
         </div>
@@ -262,13 +281,13 @@ def render_verdict(k, route, headsign, stop, hours, full_hours, style):
         detail = "Dans 8 trajets sur 10, l’écart à l’horaire est inférieur à 30 secondes"
 
     where = "sur l’ensemble de la ligne" if stop == ALL_STOPS else f"à l’arrêt {escape(stop)}"
-    when = "sur toute la journée" if hours == full_hours else f"de {hours[0]} h à {hours[1] + 1} h"
+    when = "sur toute la journée" if hours == full_hours else f"de {hours[0]} h à {hours[1]} h"
     render(
         f"""
         <div class="verdict">
           <div class="kicker">
             <span class="route-badge" style="background:{style['route_color']};color:{style['route_text_color']}">{escape(route)}</span>
-            <span>Vers {escape(headsign)}</span>
+            <span>{escape(headsign)}</span>
           </div>
           <div class="headline">{headline}</div>
           <div class="detail">{detail}, {where}, {when}.</div>
@@ -278,11 +297,17 @@ def render_verdict(k, route, headsign, stop, hours, full_hours, style):
     )
 
 
-def kpi_card(label, value, foot, tone="muted"):
+def kpi_card(label, value, foot, tone="muted", info=None):
+    # `info`: plain-text explanation shown in a pop-up on hover, keyboard focus or tap.
+    icon = (
+        f'<span class="info" tabindex="0" role="note" aria-label="{escape(info)}">i'
+        f'<span class="tip" aria-hidden="true">{escape(info)}</span></span>'
+        if info else ""
+    )
     render(
         f"""
         <div class="kpi">
-          <div class="label">{label}</div>
+          <div class="label">{label}{icon}</div>
           <div class="value">{value}</div>
           <div class="foot {tone}">{foot}</div>
         </div>
@@ -290,21 +315,34 @@ def kpi_card(label, value, foot, tone="muted"):
     )
 
 
+INFO_ON_TIME = (
+    f"Le bus passe entre {EARLY_MAX_S // 60} min avant et {ON_TIME_MAX_S // 60} min après l’horaire prévu. "    
+)
+INFO_LATE = (
+    f"Le bus passe plus de {ON_TIME_MAX_S // 60} min après l’horaire prévu. "
+    "Le chiffre est le retard moyen de ces seuls passages."
+)
+INFO_EARLY = (
+    f"Le bus passe plus de {EARLY_MAX_S // 60} min avant l’horaire prévu. "
+)
+
+
 def render_kpis(k, prev):
     p = prev or {}
     c1, c2 = st.columns(2)
     with c1:
         foot, tone = delta_text(k["on_time"], p.get("on_time"), "pts", True, 0)
-        kpi_card("À l’heure", f"{fr(k['on_time'], 0)}&nbsp;%", foot or "Part des passages à l’heure", tone)
+        kpi_card("À l’heure", f"{fr(k['on_time'], 0)}&nbsp;%", foot or "Part des passages à l’heure", tone, INFO_ON_TIME)
     with c2:
         foot, tone = delta_text(k["avg_late"], p.get("avg_late"), "min", False, 1)
-        kpi_card("Retard moyen, quand il y en a", f"+{fr(k['avg_late'])}&nbsp;min", foot or "Sur les passages en retard", tone)
+        kpi_card("Retard moyen, quand le bus est en retard", f"+{fr(k['avg_late'])}&nbsp;min", foot or f"Au-delà de {ON_TIME_MAX_S // 60} min de retard", tone, INFO_LATE)
     c3, c4 = st.columns(2)
     with c3:
         kpi_card(
             "Bus partis en avance",
             f"{fr(k['early_pct'], 0)}&nbsp;%",
             f"En moyenne {fr(k['avg_early'])} min avant l’horaire" if k["early_pct"] > 0 else "Aucun passage en avance",
+            info=INFO_EARLY,
         )
     with c4:
         warn = "Peu de données : à interpréter avec prudence" if k["n"] < 30 else "Plus il est élevé, plus c’est fiable"
@@ -372,11 +410,8 @@ def itinerary_figure(stops: pd.DataFrame, selected: str) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=stops["pos"], y=[0] * n, mode="markers", showlegend=False,
         marker=dict(size=sizes, color=colors, opacity=DOT_OPACITY, line=dict(color="#ffffff", width=2)),
-        customdata=stops[["stop_name", "p80", "n"]].to_numpy(),
-        hovertemplate=(
-            "<b>%{customdata[0]}</b><br>Retard 8 fois sur 10 : %{customdata[1]:+.1f} min"
-            "<br>%{customdata[2]} passages<extra></extra>"
-        ),
+        customdata=stops[["stop_name", "p80"]].to_numpy(),
+        hovertemplate="<b>%{customdata[0]}</b><br>Retard 8 fois sur 10 : %{customdata[1]:+.1f} min<extra></extra>",
     ))
 
     # Names. The terminus labels are anchored inward (first -> grows right, last -> grows left)
@@ -441,6 +476,9 @@ def heatmap(d: pd.DataFrame):
     ).reset_index()
     g.loc[g["n"] < MIN_CELL, "p80"] = float("nan")  # too few records to be meaningful
     pivot = g.pivot(index="weekday", columns="hour_of_day", values="p80").reindex(range(7))
+    # Plotly sizes a numeric-axis cell by the gap to its neighbours, so a missing hour
+    # (e.g. no service 2 h-3 h) made the neighbouring cells twice as wide. One column per hour fixes that.
+    pivot = pivot.reindex(columns=range(int(pivot.columns.min()), int(pivot.columns.max()) + 1))
     if pivot.dropna(how="all").empty:
         return None, None
 
@@ -450,12 +488,12 @@ def heatmap(d: pd.DataFrame):
         z=pivot.values, x=hours, y=DAYS_SHORT, xgap=3, ygap=3, zmin=0, zmax=zmax,
         colorscale=[[0, "#f4e6e6"], [0.25, "#e6bcbd"], [0.5, "#d38588"], [0.75, "#b8484d"], [1, "#8e1216"]],
         showscale=False, hoverongaps=False,
-        hovertemplate="%{y} %{x} h<br>Retard 8 fois sur 10 : %{z:+.1f} min<extra></extra>",
+        hovertemplate="%{y} %{x}<br>Retard 8 fois sur 10 : %{z:+.1f} min<extra></extra>",
     ))
     fig.update_layout(
         height=330, margin=dict(t=10, b=10, l=10, r=10),
         xaxis=dict(tickmode="array", tickvals=hours, ticktext=[f"{h} h" for h in hours],
-                   side="bottom", fixedrange=True),
+                   tickangle=-45, automargin=True, side="bottom", fixedrange=True),
         yaxis=dict(autorange="reversed", fixedrange=True),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="DM Sans, sans-serif", color=INK),
@@ -486,7 +524,8 @@ def render_distribution(d: pd.DataFrame):
         if pct > 0:
             segments += f'<div style="width:{pct:.2f}%;background:{color}"></div>'
         rows += (
-            f'<div class="dist-row"><span><span class="swatch" style="background:{color}"></span>{label}</span>'
+            f'<div class="dist-row"><span><span class="swatch" style="background:{color}"></span>{label}'
+            f'<span class="range">{STATUS_RANGES[status]}</span></span>'
             f"<b>{fr(pct, 0)}&nbsp;%</b></div>"
         )
     summary = ", ".join(f"{fr(float(shares.get(s, 0.0)), 0)} % {STATUS_LABELS[s].lower()}" for s in STATUS_ORDER)
@@ -524,41 +563,47 @@ def main():
         prev_df = df[(df["service_date"] >= prev_start) & (df["service_date"] <= prev_end)]
         has_prev = prev_start >= min_date  # only compare when the previous period is fully covered
 
-        routes = sorted(period_df["route_short_name"].astype(str).unique().tolist())
+        # Widget options come from ALL loaded data, not the selected period: Streamlit
+        # treats a widget whose options change as a new widget and resets it, which is
+        # what used to wipe direction/stop/hours when switching period.
+        routes = sorted(df["route_short_name"].astype(str).unique().tolist())
         if not routes:
-            st.warning("Aucune donnée pour cette période.")
+            st.warning("Aucune donnée disponible.")
             return
         with line_box:
             route = st.segmented_control("Ligne", routes, default=routes[0], key="route") or routes[0]
-        route_df = period_df[period_df["route_short_name"] == route]
+        all_route_df = df[df["route_short_name"] == route]  # full history, for stable options
 
         with c_dir:
-            headsigns = sorted(route_df["trip_headsign"].dropna().unique().tolist())
+            headsigns = sorted(all_route_df["trip_headsign"].dropna().unique().tolist())
             headsign = st.selectbox("Direction", headsigns or ["—"])
-        base_df = route_df[route_df["trip_headsign"] == headsign]
+        all_base_df = all_route_df[all_route_df["trip_headsign"] == headsign]
+        base_df = period_df[(period_df["route_short_name"] == route) & (period_df["trip_headsign"] == headsign)]
         prev_base = prev_df[(prev_df["route_short_name"] == route) & (prev_df["trip_headsign"] == headsign)]
 
         with c_stop:
             # Stops ordered along the line rather than alphabetically.
-            stop_order = base_df.groupby("stop_name")["stop_sequence"].mean().sort_values().index.tolist()
+            stop_order = all_base_df.groupby("stop_name")["stop_sequence"].mean().sort_values().index.tolist()
             stop = st.selectbox("Mon arrêt", [ALL_STOPS] + stop_order)
 
         with c_hours:
-            hour_vals = base_df["hour_of_day"].dropna().astype(int)
+            hour_vals = all_base_df["hour_of_day"].dropna().astype(int)
             if hour_vals.empty:
                 st.caption("Pas de données horaires.")
                 return
-            h_min, h_max = int(hour_vals.min()), int(hour_vals.max())
-            full_hours = (h_min, h_max)
-            if h_min == h_max:
-                hours = full_hours
-                st.caption(f"Plage horaire : {h_min} h")
-            else:
-                hours = st.slider("Plage horaire", h_min, h_max, full_hours, step=1)
+            # The slider works in clock times: 7 -> 9 means 7:00 up to (not including) 9:00,
+            # i.e. the 7 h and 8 h buckets. So the upper bound goes one hour past the last bucket.
+            h_start, h_end = int(hour_vals.min()), int(hour_vals.max()) + 1
+            full_hours = (h_start, h_end)
+            hours = st.slider("Plage horaire", h_start, h_end, full_hours, step=1, format="%d h")
+
+    if hours[0] == hours[1]:
+        st.info("Choisissez une plage horaire d’au moins une heure.")
+        return
 
     # ---- Filtered frames
     def in_hours(d):
-        return d[d["hour_of_day"].between(hours[0], hours[1])]
+        return d[(d["hour_of_day"] >= hours[0]) & (d["hour_of_day"] < hours[1])]
 
     def at_stop(d):
         return d if stop == ALL_STOPS else d[d["stop_name"] == stop]
@@ -570,7 +615,7 @@ def main():
 
     kpis = compute_kpis(visual_df)
     if kpis is None:
-        st.info("Aucun passage pour cette sélection. Élargissez la plage horaire ou choisissez un autre arrêt.")
+        st.info("Aucun passage pour cette sélection sur la période choisie. Essayez une période plus longue, une plage horaire plus large ou un autre arrêt.")
         return
     prev_kpis = compute_kpis(prev_visual) if has_prev else None
 
@@ -628,18 +673,19 @@ def main():
     # ---- Details
     with st.expander("Voir les données détaillées et la méthode de calcul"):
         st.markdown(
-            "- **8 trajets sur 10** : 80ᵉ centile du retard (`delay_minutes`).\n"
-            "- **Retard moyen** : calculé uniquement sur les passages en retard.\n"
-            "- **Statuts** (en avance, à l’heure, retard) : définis dans le modèle dbt `fct_transit_performance`.\n"
+            "- **8 trajets sur 10** : 80ᵉ centile du retard.\n"
+            f"- **Retard moyen** : calculé sur les passages au-delà de {ON_TIME_MAX_S // 60} min de retard.\n"
             f"- **Comparaison** : avec les {n_days} jours précédents, uniquement si cette période est entièrement couverte.\n"
             f"- **Carte thermique** : les créneaux de moins de {MIN_CELL} passages sont masqués."
         )
         st.dataframe(
-            visual_df[["route_short_name", "trip_headsign", "stop_name", "service_date",
+            visual_df[["route_short_name", "trip_headsign", "stop_name",
                        "actual_arrival_time", "delay_minutes", "punctuality_status"]]
+            .sort_values("actual_arrival_time", ascending=True)
+            .assign(punctuality_status=lambda x: x["punctuality_status"].replace(STATUS_LABELS))
             .rename(columns={
                 "route_short_name": "Ligne", "trip_headsign": "Direction", "stop_name": "Arrêt",
-                "service_date": "Date", "actual_arrival_time": "Heure réelle",
+                "actual_arrival_time": "Heure réelle",
                 "delay_minutes": "Écart (min)", "punctuality_status": "Statut",
             }),
             hide_index=True, use_container_width=True,

@@ -37,10 +37,11 @@ SELECT
     u.delay_seconds,
     ROUND(u.delay_seconds / 60.0, 2) AS delay_minutes,
     
-    CASE 
-        WHEN u.delay_seconds < -60 THEN 'Early'
-        WHEN u.delay_seconds BETWEEN -60 AND 180 THEN 'On Time'
-        WHEN u.delay_seconds BETWEEN 181 AND 600 THEN 'Slight Delay'
+    CASE
+        WHEN u.delay_seconds IS NULL THEN NULL
+        WHEN u.delay_seconds < -60   THEN 'Early'
+        WHEN u.delay_seconds <= 300  THEN 'On Time'
+        WHEN u.delay_seconds <= 600  THEN 'Slight Delay'
         ELSE 'Severe Delay'
     END AS punctuality_status,
 
