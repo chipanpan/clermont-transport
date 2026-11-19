@@ -5,7 +5,19 @@ steps:
     args:
       - '-c'
       - |
+        set -e
+        cd transform
         dbt deps --profiles-dir .
+
+  - name: 'ghcr.io/dbt-labs/dbt-bigquery:1.8'
+    id: 'dbt-debug'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        cd transform
+        dbt debug --target prod --profiles-dir .
 
   - name: 'ghcr.io/dbt-labs/dbt-bigquery:1.8'
     id: 'dbt-build'
@@ -13,6 +25,8 @@ steps:
     args:
       - '-c'
       - |
+        set -e
+        cd transform
         dbt build --target prod --profiles-dir .
 
 options:
