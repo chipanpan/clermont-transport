@@ -539,7 +539,7 @@ def main():
     df = load_data()
     route_styles = load_route_styles()
     if df.empty:
-        st.warning("Aucune donnée dans `fct_transit_performance` pour le moment. Vérifiez l’ingestion et `dbt run`.")
+        st.warning("Aucune donnée pour le moment.")
         return
 
     min_date, max_date = df["service_date"].min(), df["service_date"].max()

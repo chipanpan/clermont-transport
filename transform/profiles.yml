@@ -1,0 +1,20 @@
+transform:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: clermont-transport
+      dataset: t2c_dbt
+      location: us-central1
+      threads: 4
+      timeout_seconds: 300
+
+    prod:
+      type: bigquery
+      method: oauth
+      project: clermont-transport
+      dataset: t2c_dbt
+      location: us-central1
+      threads: 4
+      timeout_seconds: 300

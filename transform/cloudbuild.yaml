@@ -1,0 +1,19 @@
+steps:
+  - name: 'ghcr.io/dbt-labs/dbt-bigquery:1.8'
+    id: 'dbt-deps'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        dbt deps --profiles-dir .
+
+  - name: 'ghcr.io/dbt-labs/dbt-bigquery:1.8'
+    id: 'dbt-build'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        dbt build --target prod --profiles-dir .
+
+options:
+  logging: CLOUD_LOGGING_ONLY
