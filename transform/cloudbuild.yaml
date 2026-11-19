@@ -1,35 +1,16 @@
 steps:
   - name: 'python:3.11-slim'
-    id: 'dbt-deps'
+    id: 'dbt-run'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         set -e
+        apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
         pip install --no-cache-dir dbt-bigquery
         cd transform
         dbt deps --profiles-dir .
-
-  - name: 'python:3.11-slim'
-    id: 'dbt-debug'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        pip install --no-cache-dir dbt-bigquery
-        cd transform
         dbt debug --target prod --profiles-dir .
-
-  - name: 'python:3.11-slim'
-    id: 'dbt-build'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        pip install --no-cache-dir dbt-bigquery
-        cd transform
         dbt build --target prod --profiles-dir .
 
 options:
